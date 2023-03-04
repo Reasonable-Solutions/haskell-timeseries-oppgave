@@ -1,35 +1,60 @@
-import Text.Read (readEither)
+{-# LANGUAGE DeriveFunctor #-}
+{-# LANGUAGE TypeApplications #-}
 
--- Dager er inklusive i begge ender
--- { start: 1, end: 5 } = 5 hele dager, 1, 2, 3, 4, 5
+import Control.Exception (assert)
+import Data.Function
+import Data.Functor
+import Data.List
+import Data.Maybe
+import Text.Pretty.Simple (pPrint)
+
 data TimeRange = TimeRange
   { start :: Int,
     end :: Int
   }
   deriving (Show, Read, Eq)
 
--- Vi lurer på om personen har vært sykmeldt i 6 uker eller mer (42 dager)
--- UTEN et opphold på 16 dager eller mer.
---
--- F.eks:
--- Sykmeldt i 30 dager, også friskmeldt i 16 dager, også sykmeldt i 30 dager = true
--- Sykmeldt i 30 dager, også friskmeldt i 17 dager, også sykmeldt i 30 dager = false
--- Syk i 10 dager, frisk i 10, syk i 10, frisk i 10, syk i 10 er et reknet
---   som "sammenhengende" syk i 50 dager, med ingen opphold over 16 dager = true
-continuouslySick :: Int -> Int -> [TimeRange] -> Bool
-continuouslySick weeks allowedGap _ = False
+data Status a = Sick a | Well a deriving (Show, Functor)
 
-hasBeencontinuouslySickFor6Weeks :: [TimeRange] -> Bool
-hasBeencontinuouslySickFor6Weeks = continuouslySick 6 16
+-- ranges are inclusive
+duration :: TimeRange -> (Int, Int, Int)
+duration (TimeRange beginning end) = (beginning, end, end - beginning + 1)
 
+sickWell :: (TimeRange, TimeRange) -> [Status TimeRange]
+sickWell ((TimeRange a b), (TimeRange c d)) = [Sick $ TimeRange a b, Well $ TimeRange (b + 1) (c - 1), Sick $ TimeRange c d]
+
+periodsAndPauses :: [Status (Int, Int, Int)] -> (Int, [Int])
+periodsAndPauses ps = (periodLength ps, mapMaybe wellMoreThanSixteenDays ps)
+
+valids :: (Int, [Int]) -> Bool
+valids (length, pauses)
+  | (length > 42) = not $ any (> 16) pauses
+  | (length <= 42) = False
+
+main :: IO ()
 main = do
-  case1 <- readFile "data1.txt"
-  case2 <- readFile "data2.txt"
-  case3 <- readFile "data3.txt"
-  case4 <- readFile "data4.txt"
+  cases <- traverse readRange ["data1.txt", "data2.txt", "data3.txt", "data4.txt"]
+  let res = cases <&> (periodsAndPauses . (fmap . fmap $ duration) . concat . (fmap sickWell) . zippy)
 
-  print $ map (fmap hasBeencontinuouslySickFor6Weeks . parseTimeRange) [case1, case2, case3, case4]
+  pPrint $ valids <$> res
+  print $ assert (fmap valids res == [True, True, False, False]) "cases work"
   where
-    -- readEither brukes så vi får feilen i outputten om man har feil struktur på data-filenameCDialect
-    parseTimeRange :: String -> Either String [TimeRange]
-    parseTimeRange = readEither
+    readRange f = read @[TimeRange] <$> readFile f
+
+zippy :: [TimeRange] -> [(TimeRange, TimeRange)]
+zippy ranges = zip ranges $ tail ranges
+
+wellMoreThanSixteenDays :: (Ord a, Num a) => Status (a, a, a) -> Maybe a
+wellMoreThanSixteenDays (Well (_, _, a))
+  | a > 16 = Just a
+  | otherwise = Nothing
+wellMoreThanSixteenDays (Sick _) = Nothing
+
+periodLength :: [Status (Int, Int, Int)] -> Int
+periodLength ranges = maximum (unEnd <$> ranges) - minimum (unStart <$> ranges) + 1
+
+unStart (Sick (x, _, _)) = x
+unStart (Well (x, _, _)) = x
+
+unEnd (Sick (_, x, _)) = x
+unEnd (Well (_, x, _)) = x
