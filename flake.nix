@@ -29,7 +29,8 @@
           # The Nix packages provided in the environment
           packages = with pkgs.haskellPackages; [
             cabal-install
-            ghc
+            (ghc.withPackages (pkgs: [ witherable pretty-simple ]))
+            ormolu
           ];
         };
       });
